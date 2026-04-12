@@ -176,3 +176,55 @@ Rate match 0-100. Reply ONLY with valid JSON:
             scored.append(job)
     scored.sort(key=lambda x: x.get("match_score", 0), reverse=True)
     return {"scored_jobs": scored}
+
+import re
+
+@app.post("/api/score")
+async def score_job(data: dict):
+    """Score a job against a resume using Perplexity AI."""
+    resume      = data.get("resume", "")
+    title       = data.get("title", "")
+    company     = data.get("company", "")
+    location    = data.get("location", "")
+    description = data.get("description", "")
+
+    if not resume:
+        return {"score": 0, "reasoning": "No resume provided.", "missing": []}
+    if not description and not title:
+        return {"score": 0, "reasoning": "No job description.", "missing": []}
+
+    from openai import OpenAI
+    client = OpenAI(
+        api_key=os.environ.get("PERPLEXITY_API_KEY"),
+        base_url="https://api.perplexity.ai"
+    )
+
+    prompt = f"""You are a professional recruiter. Score this resume against the job posting.
+Return ONLY a valid JSON object — no markdown, no text outside the JSON.
+
+RESUME:
+{resume[:3000]}
+
+JOB: {title} at {company} ({location})
+DESCRIPTION: {description[:2000]}
+
+Return exactly this format:
+{{"score": 82, "reasoning": "Strong Python skills match. Missing AWS certification.", "missing": ["AWS", "Kubernetes"]}}
+
+Rules: score 0-100 integer. reasoning 1-2 sentences. missing = up to 5 skill gaps."""
+
+    try:
+        response = client.chat.completions.create(
+            model="sonar",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+            temperature=0.2
+        )
+        text = response.choices[0].message.content.strip()
+        match = re.search(r'\{.*?\}', text, re.DOTALL)
+        if match:
+            import json as _json
+            return _json.loads(match.group())
+        return {"score": 0, "reasoning": text[:200], "missing": []}
+    except Exception as e:
+        return {"score": 0, "reasoning": f"Scoring error: {str(e)}", "missing": []}
