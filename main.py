@@ -5,6 +5,9 @@ from jobspy import scrape_jobs
 from typing import Optional
 import pandas as pd
 import io, csv, math
+import httpx
+import os
+from datetime import datetime
 
 app = FastAPI(
     title="JobSpy Search Engine API",
@@ -132,3 +135,44 @@ def export_csv(
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
+
+class ResumeScoreRequest(BaseModel):
+    resume_text: str
+    jobs: list[dict]
+
+@app.post("/api/score-resume")
+async def score_resume(request: ResumeScoreRequest):
+    if not PERPLEXITY_API_KEY:
+        raise HTTPException(status_code=400,
+            detail="PERPLEXITY_API_KEY not set in environment")
+    scored = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for job in request.jobs[:10]:
+            prompt = f"""Resume: {request.resume_text[:1200]}
+Job: {job.get('title','')} at {job.get('company','')}
+Description: {job.get('description','No description')[:600]}
+Rate match 0-100. Reply ONLY with valid JSON:
+{{"score":75,"reason":"Why good fit","missing":"Skills lacking"}}"""
+            try:
+                r = await client.post(
+                    "https://api.perplexity.ai/chat/completions",
+                    headers={"Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+                             "Content-Type": "application/json"},
+                    json={"model":"sonar","messages":[
+                        {"role":"user","content":prompt}],"max_tokens":150}
+                )
+                content = r.json()["choices"][0]["message"]["content"]
+                import re, json as j
+                m = re.search(r'\{.*?\}', content, re.DOTALL)
+                if m:
+                    d = j.loads(m.group())
+                    job["match_score"] = d.get("score", 0)
+                    job["match_reason"] = d.get("reason", "")
+                    job["match_missing"] = d.get("missing", "")
+            except Exception as ex:
+                job["match_score"] = 0
+            scored.append(job)
+    scored.sort(key=lambda x: x.get("match_score", 0), reverse=True)
+    return {"scored_jobs": scored}
