@@ -7,6 +7,7 @@ import pandas as pd
 import io, csv, math
 import httpx
 import os
+from pydantic import BaseModel
 from datetime import datetime
 
 app = FastAPI(
