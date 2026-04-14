@@ -299,3 +299,45 @@ Rules: 2-5 words per term. Cover: titles, skills, certs, industries, seniority."
                 out.append(job)
 
     return {"status": "ok", "count": len(out), "searches": searches, "jobs": out}
+
+# ── Search (POST) — accepts JSON body from frontend ──────────────────────────
+
+class SearchRequestBody(BaseModel):
+    search_term: str
+    location: str = ""
+    site_name: str = "indeed,linkedin,zip_recruiter,google"
+    results_wanted: int = 20
+    hours_old: int = 72
+    job_type: Optional[str] = None
+    country_indeed: str = "Canada"
+    is_remote: Optional[bool] = None
+    distance: Optional[int] = None
+    linkedin_fetch_description: bool = False
+    google_search_term: Optional[str] = None
+
+@app.post("/api/search", tags=["Jobs"])
+def search_jobs_post(req: SearchRequestBody):
+    try:
+        sites = [s.strip() for s in req.site_name.split(",") if s.strip()]
+        kwargs = dict(
+            site_name=sites,
+            search_term=req.search_term,
+            results_wanted=req.results_wanted,
+            hours_old=req.hours_old,
+            country_indeed=req.country_indeed,
+            linkedin_fetch_description=req.linkedin_fetch_description,
+        )
+        if req.location:              kwargs["location"] = req.location
+        if req.job_type:              kwargs["job_type"] = req.job_type
+        if req.is_remote is not None: kwargs["is_remote"] = req.is_remote
+        if req.distance is not None:  kwargs["distance"] = req.distance
+        if req.google_search_term:    kwargs["google_search_term"] = req.google_search_term
+
+        df = scrape_jobs(**kwargs)
+        if df is None or len(df) == 0:
+            return {"jobs": [], "total": 0, "message": "No jobs found — try broader terms."}
+
+        df = clean_df(df)
+        return {"jobs": df.to_dict(orient="records"), "total": len(df)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
