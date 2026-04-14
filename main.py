@@ -300,38 +300,43 @@ Rules: 2-5 words per term. Cover: titles, skills, certs, industries, seniority."
 
     return {"status": "ok", "count": len(out), "searches": searches, "jobs": out}
 
-# ── Search (POST) — accepts JSON body from frontend ──────────────────────────
-
-class SearchRequestBody(BaseModel):
-    search_term: str
-    location: str = ""
-    site_name: str = "indeed,linkedin,zip_recruiter,google"
-    results_wanted: int = 20
-    hours_old: int = 72
-    job_type: Optional[str] = None
-    country_indeed: str = "Canada"
-    is_remote: Optional[bool] = None
-    distance: Optional[int] = None
-    linkedin_fetch_description: bool = False
-    google_search_term: Optional[str] = None
+# ── Search (POST) — accepts any JSON body, flexible field names ───────────────
 
 @app.post("/api/search", tags=["Jobs"])
-def search_jobs_post(req: SearchRequestBody):
+def search_jobs_post(data: dict):
     try:
-        sites = [s.strip() for s in req.site_name.split(",") if s.strip()]
+        raw_sites = data.get("site_name", "indeed,linkedin,zip_recruiter,google")
+        if isinstance(raw_sites, list):
+            sites = raw_sites
+        else:
+            sites = [s.strip() for s in str(raw_sites).split(",") if s.strip()]
+
         kwargs = dict(
             site_name=sites,
-            search_term=req.search_term,
-            results_wanted=req.results_wanted,
-            hours_old=req.hours_old,
-            country_indeed=req.country_indeed,
-            linkedin_fetch_description=req.linkedin_fetch_description,
+            search_term=str(data.get("search_term", "")),
+            results_wanted=int(data.get("results_wanted", 20)),
+            hours_old=int(data.get("hours_old", 72)),
+            country_indeed=str(data.get("country_indeed", "Canada")),
+            linkedin_fetch_description=bool(data.get("linkedin_fetch_description", False)),
         )
-        if req.location:              kwargs["location"] = req.location
-        if req.job_type:              kwargs["job_type"] = req.job_type
-        if req.is_remote is not None: kwargs["is_remote"] = req.is_remote
-        if req.distance is not None:  kwargs["distance"] = req.distance
-        if req.google_search_term:    kwargs["google_search_term"] = req.google_search_term
+
+        location = data.get("location", "")
+        if location: kwargs["location"] = str(location)
+
+        job_type = data.get("job_type")
+        if job_type: kwargs["job_type"] = str(job_type)
+
+        is_remote = data.get("is_remote")
+        if is_remote is not None: kwargs["is_remote"] = bool(is_remote)
+
+        distance = data.get("distance")
+        if distance is not None: kwargs["distance"] = int(distance)
+
+        google_search_term = data.get("google_search_term")
+        if google_search_term: kwargs["google_search_term"] = str(google_search_term)
+
+        if not kwargs["search_term"]:
+            return {"jobs": [], "total": 0, "message": "search_term is required."}
 
         df = scrape_jobs(**kwargs)
         if df is None or len(df) == 0:
